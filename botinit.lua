@@ -19,7 +19,7 @@ local savepath = fs.join(carrion.BasePath, "fmksave.lua")
 
 local rollpatterns = {
 	"^.-[rR]+[oO]+[lL]+.-",
-	"^.-[sS]+[pP]+[iIeE]+[eE]+[nN]+.-",
+	"^.-[sS]+[pP]+[iIeE]+[nN]+.-",
 	"^.-[bB]+[oO]+[tT]+[lL]+[eE]+.-",
 }
 
@@ -219,6 +219,10 @@ end
 ---@param data sse.Event.channel_message
 function Fumaki:tryextractresponse(data)
 	self.log:debug("attempting response extraction...")
+	if self.spinner.id ~= data.sender.id then
+		self:sendmessage("It's not your turn!", data.sender)
+		return
+	end
 	local selfname = ("?%s%s%s"):format(bropen, self.name, brclose)
 	local message = data.body:sub(selfname:len() - 1)
 
@@ -305,14 +309,15 @@ function Fumaki:channel_message(data)
 	end
 
 	if data.tab_id == self:getfmktab() then
-		if self.spinner and self.spinner.id == data.sender.id then
-			self:tryextractresponse(data)
-		end
 		for _, pat in ipairs(rollpatterns) do
 			if message:match(pat) then
 				self:dofmk(data)
-				break
+				return
 			end
+		end
+		if self.spinner then
+			self:tryextractresponse(data)
+			return
 		end
 	end
 
