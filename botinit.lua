@@ -23,7 +23,7 @@ local rollpatterns = {
 	"^.-[bB]+[oO]+[tT]+[lL]+[eE]+.-",
 }
 
-local statpattern = "^.-[sS]+[tT]+[aA]+[tT]+[sS]+-."
+local statpattern = "^.-[sS]+[tT]+[aA]+[tT]+[sS]+.-"
 
 local responsepattern = "^.-([fFmMkKpP]).-[ %,]([fFmMkKpP]).-[ %,]-([fFmMkKpP]).-"
 local catchallresponsepattern = "^.-([fFmMkKpP]).-([fFmMkKpP]).-([fFmMkKpP]).-"
