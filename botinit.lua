@@ -23,7 +23,7 @@ local rollpatterns = {
 	"^.-[bB]+[oO]+[tT]+[lL]+[eE]+.-",
 }
 
-local statpattern = "^.-[sS]+[aA]+[tT]+[sS]+-."
+local statpattern = "^.-[sS]+[tT]+[aA]+[tT]+[sS]+-."
 
 local responsepattern = "^.-([fFmMkKpP]).-[ %,]([fFmMkKpP]).-[ %,]-([fFmMkKpP]).-"
 local catchallresponsepattern = "^.-([fFmMkKpP]).-([fFmMkKpP]).-([fFmMkKpP]).-"
@@ -325,6 +325,7 @@ function Fumaki:channel_message(data)
 	end
 
 	if message:match(statpattern) then
+		self.log:debugF("getting stats for %i", data.sender.id)
 		local stats = self.save.scores[data.sender.id]
 		if not stats then
 			self:sendmessage("You haven't been spun yet!", data.sender, data.tab_id)
