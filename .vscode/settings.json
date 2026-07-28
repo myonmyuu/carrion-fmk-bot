@@ -1,0 +1,14 @@
+{
+	"Lua.runtime.version": "LuaJIT",
+	"Lua.runtime.special": {
+		"love.filesystem.load": "loadfile"
+	},
+	"Lua.workspace.library": [
+		"${3rd}/love2d/library",
+		"${workspaceFolder}/lib",
+		"${workspaceFolder}/../carrion-simplebot/lib"
+	],
+	"Lua.diagnostics.disable": [
+		"inject-field"
+	]
+}
