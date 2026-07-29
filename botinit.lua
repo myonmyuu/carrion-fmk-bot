@@ -15,12 +15,14 @@ local brclose			= "%]"
 local spintimemins		= 5
 local spintimesecs		= 60 * spintimemins
 
+local tprint = helpers.tprint
+
 local savepath = fs.join(carrion.BasePath, "fmksave.lua")
 
 local rollpatterns = {
-	"^.-[rR]+[oO]+[lL]+.-",
-	"^.-[sS]+[pP]+[iIeE]+[nN]+.-",
-	"^.-[bB]+[oO]+[tT]+[lL]+[eE]+.-",
+	"^.-[rR]+.-[oO]+.-[lL]+.-",
+	"^.-[sS]+.-[pP]+.-[iIeE ]+.-[nN]+.-",
+	"^.-[bB]+.-[oO]+.-[tT]+.-[lL]+.-[eE]+.-",
 }
 
 local statpattern = "^.-[sS]+[tT]+[aA]+[tT]+[sS]+.-"
@@ -125,10 +127,11 @@ function Fumaki:sendmessage(body, respondee, tab)
 		body	= body;
 		tab_id	= tab or self:getfmktab();
 	}
+	self.log:infoF("sending message '%s'", body)
 	self:request(carrion.Api.channels.send(roomname), carrion:makehttpcontent(reqcontent))
 end
 
----@param data sse.Event.channel_message
+---@param data sse.EventData.channel_message
 function Fumaki:dofmk(data)
 	if table.getIndex(self.save.banned, data.sender.id) ~= 0 then
 		self.log:debug("banned user blocked from spinning")
@@ -216,7 +219,7 @@ function Fumaki:dofmk(data)
 	-- math.random(1, #user)
 end
 
----@param data sse.Event.channel_message
+---@param data sse.EventData.channel_message
 function Fumaki:tryextractresponse(data)
 	self.log:debug("attempting response extraction...")
 	if self.spinner.id ~= data.sender.id then
@@ -297,52 +300,84 @@ function Fumaki:tryextractresponse(data)
 	self:sendmessage("No idea what to do with your response, refer to my profile for valid answers!")
 end
 
----@param data sse.Event.channel_message
-function Fumaki:channel_message(data)
-	self.log:debug("got a message...")
-	local pattern = ("^?%s%s%s"):format(bropen, self.name, brclose)
-	local message = data.body
-	if not message:match(pattern) then
-		self.log:debug("we do not care")
-		--- we dont care
-		return
-	end
+local probtexts = {
+	"...I have literally no idea what you mean.",
+	"We do not care.",
+	"Something stink in here, or is that just me?",
+	"Nuh uh.",
+	"Say please.",
+	"You're not trying hard enough.",
+	"Calm down.",
+	"/me is in the process of checking out her stopwatch. \"Huh, you're talking to me?!\"",
+	"Just. No.",
+	"Rude!",
+	"/me shakes her head.",
+	"/me wobbles her hand, \"Ehhhhh...\"",
+	"I think I had a stroke trying to comprehend that.",
+}
+---@param data sse.EventData.channel_message
+function Fumaki:nounderstand(data)
+	self:sendmessage(probtexts[love.math.random(1, #probtexts)], data.sender, data.tab_id)
+end
 
-	if data.tab_id == self:getfmktab() then
-		for _, pat in ipairs(rollpatterns) do
-			if message:match(pat) then
-				self:dofmk(data)
+do --- sse
+	---@param data sse.EventData.channel_message
+	function Fumaki:channel_message(data)
+		self.log:debug("got a message...")
+		local pattern = ("^?%s%s%s"):format(bropen, self.name, brclose)
+		local message = data.body
+		if not message:match(pattern) then
+			self.log:debug("we do not care")
+			--- we dont care
+			return
+		end
+
+		self.log:infoF("received pinging message '%s'", message)
+
+		if data.tab_id == self:getfmktab() then
+			for _, pat in ipairs(rollpatterns) do
+				if message:match(pat) then
+					self:dofmk(data)
+					return
+				end
+			end
+			if self.spinner then
+				self:tryextractresponse(data)
 				return
 			end
 		end
-		if self.spinner then
-			self:tryextractresponse(data)
+
+		if message:match(excludepattern) then
+			if table.getIndex(self.save.exceptions, data.sender.id) ~= 0 then
+				self:sendmessage("You're already excluded from rolls.", data.sender, data.tab_id)
+				return
+			end
+			table.insert(self.save.exceptions, data.sender.id)
+			self:sendmessage("Very well, you wont appear in rolls from now on.", data.sender, data.tab_id)
+			return
+		elseif message:match(includepattern) then
+			local succ = table.removeall(self.save.exceptions, data.sender.id)
+			self:sendmessage(succ and "Alright, you're back in!" or "You're not even excluded...", data.sender, data.tab_id)
 			return
 		end
-	end
 
-	if message:match(excludepattern) then
-		table.insert(self.save.exceptions, data.sender.id)
-		self:sendmessage("Very well, you wont appear in rolls from now on.", data.sender, data.tab_id)
-	elseif message:match(includepattern) then
-		local succ = table.removeall(self.save.exceptions, data.sender.id)
-		self:sendmessage(succ and "Alright, you're back in!" or "You're not even excluded...", data.sender, data.tab_id)
-	end
-
-	if message:match(statpattern) then
-		self.log:debugF("getting stats for %i", data.sender.id)
-		local stats = self.save.scores[data.sender.id]
-		if not stats then
-			self:sendmessage("You haven't been spun yet!", data.sender, data.tab_id)
+		if message:match(statpattern) then
+			self.log:debugF("getting stats for %i", data.sender.id)
+			local stats = self.save.scores[data.sender.id]
+			if not stats then
+				self:sendmessage("You haven't been spun yet!", data.sender, data.tab_id)
+				return
+			end
+			local rollres = ""
+			for key, readable in pairs(answers) do
+				rollres = ("%s %s: %s"):format(rollres, readable, tostring(stats[key]))
+			end
+			self:sendmessage(("Alright, here;%s.%sRemember not to take things too seriously, it's just a game!"):format(rollres,  nl), data.sender, data.tab_id)
 			return
 		end
-		local rollres = ""
-		for key, readable in pairs(answers) do
-			rollres = ("%s %s: %s"):format(rollres, readable, tostring(stats[key]))
-		end
-		self:sendmessage(("Alright, here;%s.%sRemember not to take things too seriously, it's just a game!"):format(rollres,  nl), data.sender, data.tab_id)
+
+		self:nounderstand(data)
 	end
-	-- helpers.tprint(data)
 end
 
 ---@param token	string
