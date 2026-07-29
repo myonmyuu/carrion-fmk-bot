@@ -155,57 +155,50 @@ function Fumaki:dofmk(data)
 	self.spintimerem = spintimesecs
 	self.log:debug("attempting a spin...")
 
-	local users_res = self:request(carrion.Api.room.getusers(roomname))
-	local users_t = users_res:getbodytable()
-	if not users_res then
-		self.log:errorF("unable to get room users")
-		self.spinner = nil
-		return
-	end
-	local occupants = users_t and users_t.occupants ---@type string[]?
-	if not occupants then
-		self.log:errorF("unable to get room users")
-		self.spinner = nil
-		return
-	end
+	-- local users_res = self:request(carrion.Api.room.getusers(roomname))
+	-- local users_t = users_res:getbodytable()
+	-- if not users_res then
+	-- 	self.log:errorF("unable to get room users")
+	-- 	self.spinner = nil
+	-- 	return
+	-- end
+	-- local occupants = users_t and users_t.occupants ---@type string[]?
+	-- if not occupants then
+	-- 	self.log:errorF("unable to get room users")
+	-- 	self.spinner = nil
+	-- 	return
+	-- end
 
-	table.removeItem(occupants, data.sender.name)
-	local occucount = #occupants
-	local occupant_by_id = {}
-	local occupant_ids = {}
+	local participant_ids = table.map(carrion.Users, function (k, v)
+		return k
+	end)
+	table.removeItem(participant_ids, data.sender.name)
+	local particip_count = #participant_ids
 
-	for _, name in ipairs(occupants) do
-		local id_res = self:request(carrion.Api.characters.byname(name)):getbodytable()
-		if id_res then
-			occupant_by_id[id_res.id] = name
-			table.insert(occupant_ids, id_res.id)
-		end
-	end
 	for _, id in ipairs(self.save.exceptions) do
-		table.removeItem(occupant_ids, id)
-		occupant_by_id[id] = nil
-		occucount = occucount - 1
+		table.removeItem(participant_ids, id)
+		particip_count = particip_count - 1
 	end
 	-- helpers.tprint(data)
 	-- helpers.tprint(occupants)
 	local picked_user_names = {}
 	local option_ids = {}
 	while #picked_user_names < 3 do
-		if #occupant_ids <= 0 then
+		if particip_count <= 0 then
 			respond("Well, there's not enough people for this here...")
 			self.spinner = nil
 			return
 		end
 
-		local i = love.math.random(1, occucount)
-		local user_id = occupant_ids[i]
-		local user_name = occupant_by_id[user_id]
+		local i = love.math.random(1, particip_count)
+		local user_id = participant_ids[i]
+		local user = carrion.Users[user_id]
 		-- print("num res:", #results, "index:", i, "user:", user)
 		-- print(table.getIndex(self.exceptions, user) == 0)
 		-- print(user, "==", data.sender.name, user == data.sender.name)
-		table.insert(picked_user_names, user_name)
-		table.insert(option_ids, user_id)
-		table.removeItem(occupant_ids, user_id)
+		table.insert(picked_user_names, user.name)
+		table.insert(option_ids, user.id)
+		table.removeItem(participant_ids, user.id)
 	end
 
 	local res_body = ("Okay %s, you have %s minutes to choose your picks! Ping me here again with a valid pick, check my profile if you're unsure.%s"):format(data.sender.name, tostring(spintimemins), nl)
