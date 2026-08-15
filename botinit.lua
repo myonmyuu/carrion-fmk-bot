@@ -25,14 +25,25 @@ local rollpatterns = {
 	"^.-[bB]+.-[oO]+.-[tT]+.-[lL]+.-[eE]+.-",
 }
 
-local statpattern = "^.-[sS]+[tT]+[aA]+[tT]+[sS]+.-"
+local statpattern = "^.-[sS]+.-[tT]+.-[aA]+.-[tT]+.-[sS]+.-"
 
-local responsepattern = "^.-([fFmMkKpP]).-[ %,]([fFmMkKpP]).-[ %,]-([fFmMkKpP]).-"
+local responsepattern = "^.-([fFmMkKpP]).-[ %,]+([fFmMkKpP]).-[ %,]+([fFmMkKpP]).-"
 local catchallresponsepattern = "^.-([fFmMkKpP]).-([fFmMkKpP]).-([fFmMkKpP]).-"
+local passpattern = "^.-[pP]+[aA]+[sS]+.-"
+local globalpattern = "^.-[gG]+.-[lL]+.-[oO]+.-[bB]+.-[aA]+.-[lL]+.-"
 
 local excludepattern = "^.-ignoreme.-"
 local includepattern = "^.-includeme.-"
+
+local registerpattern = "^.-regalt[ %,]+(.+)"
+local unregisterpattern = "^.-unregalt[ %,]+(.+)"
 local nl = "</br>"
+
+---@alias AltRegResult
+---|"failed"
+---|"registered"
+---|"confirmed"
+---|"removed"
 
 local answers = {
 	f = "Fuck";
@@ -59,6 +70,7 @@ local FMKSave = {
 	exceptions	= nil;	---@type integer[]
 	scores		= nil;	---@type table<integer, FMKScore>
 	banned		= nil;	---@type integer[]
+	alts		= nil;	---@type table<integer, table<integer, boolean>>
 }
 function FMKSave:new()
 	return setmetatable({
@@ -76,6 +88,17 @@ local Fumaki = {
 	spintimerem	= 0;
 	options		= nil;	---@type integer[]
 }
+
+function Fumaki:postlogin()
+	self:request(
+		carrion.Api.presence.subscribe,
+		carrion:makehttpcontent {
+			rooms = {
+				roomname,
+			}
+		}
+	)
+end
 
 function Fumaki:getfmktab()
 	if not self.tab then
@@ -99,7 +122,9 @@ function Fumaki:loaddata()
 	self.log:debug("loading...")
 	local res, _ = ser.loadFromFile(savepath)
 	self.save = setmetatable(res or FMKSave:new(), { __index = FMKSave })
-	helpers.tprint(self.save)
+	self.save.alts = self.save.alts or {}
+
+	-- helpers.tprint(self.save)
 end
 
 function Fumaki:savedata()
@@ -120,6 +145,7 @@ end
 
 function Fumaki:shutdown()
 	self:savedata()
+	self:request(carrion.Api.presence.disconnect)
 end
 
 function Fumaki:sendmessage(body, respondee, tab)
@@ -138,7 +164,7 @@ function Fumaki:dofmk(data)
 		return
 	end
 	local function respond(body)
-		self.log:debug(("responding... (%s)"):format(body))
+		-- self.log:debug(("responding... (%s)"):format(body))
 		self:sendmessage(body)
 	end
 	if self.spinner then
@@ -155,24 +181,48 @@ function Fumaki:dofmk(data)
 	self.spintimerem = spintimesecs
 	self.log:debug("attempting a spin...")
 
-	-- local users_res = self:request(carrion.Api.room.getusers(roomname))
-	-- local users_t = users_res:getbodytable()
-	-- if not users_res then
-	-- 	self.log:errorF("unable to get room users")
-	-- 	self.spinner = nil
-	-- 	return
-	-- end
-	-- local occupants = users_t and users_t.occupants ---@type string[]?
-	-- if not occupants then
-	-- 	self.log:errorF("unable to get room users")
-	-- 	self.spinner = nil
-	-- 	return
-	-- end
+	local participant_ids
+	if false --[[data.body:match(globalpattern)]] then	--- not good, janitors said no!
+		participant_ids = table.map(carrion.Users, function (k, v)
+			return k
+		end)
+	else
+		local function noworky()
+			self:sendmessage("Uh, there was some sort of problem. Blame my creator. Next spin is free again.")
+		end
+		local users_res = self:request(carrion.Api.room.getusers(roomname))
+		local users_t = users_res:getbodytable()
+		if not users_res then
+			self.log:errorF("unable to get room users")
+			self.spinner = nil
+			noworky()
+			return
+		end
+		local occupants = users_t and users_t.occupants ---@type Carrion.CharName[]?
+		if not occupants then
+			self.log:errorF("unable to get room users")
+			self.spinner = nil
+			noworky()
+			return
+		end
 
-	local participant_ids = table.map(carrion.Users, function (k, v)
-		return k
-	end)
-	table.removeItem(participant_ids, data.sender.name)
+		participant_ids = table.map(occupants, function (_, v)
+			return carrion.UserIDMap[v]
+		end)
+	end
+
+	if love.math.random(0, 80) < 69 then
+		table.removeItem(participant_ids, Fumaki.id)
+	end
+	table.removeItem(participant_ids, data.sender.id)
+	local altlist = self.save.alts[data.sender.id]
+	if altlist then
+		for key, value in pairs(altlist) do
+			if value then
+				table.removeItem(participant_ids, key)
+			end
+		end
+	end
 	local particip_count = #participant_ids
 
 	for _, id in ipairs(self.save.exceptions) do
@@ -185,7 +235,7 @@ function Fumaki:dofmk(data)
 	local option_ids = {}
 	while #picked_user_names < 3 do
 		if particip_count <= 0 then
-			respond("Well, there's not enough people for this here...")
+			respond("Well, there's not enough people around for this...")
 			self.spinner = nil
 			return
 		end
@@ -193,12 +243,35 @@ function Fumaki:dofmk(data)
 		local i = love.math.random(1, particip_count)
 		local user_id = participant_ids[i]
 		local user = carrion.Users[user_id]
+
+		if not user then
+			self.log:errorF("tried to take invalid participant: %s %s", tostring(i))
+			goto continue
+		end
+
+		particip_count = particip_count - 1
+		table.removeItem(participant_ids, user.id)
+		if user.is_private == nil then
+			local bulkres = self:request(carrion.Api.characters.bulk, carrion:makehttpcontent {
+				names = {
+					user.name
+				}
+			}):getbodytable()
+			if not bulkres then
+				goto continue
+			end
+			user.is_private = bulkres.profiles ~= nil and bulkres.profiles[user.name] ~= nil
+		end
+		if user.is_private then
+			goto continue
+		end
 		-- print("num res:", #results, "index:", i, "user:", user)
 		-- print(table.getIndex(self.exceptions, user) == 0)
 		-- print(user, "==", data.sender.name, user == data.sender.name)
 		table.insert(picked_user_names, user.name)
 		table.insert(option_ids, user.id)
-		table.removeItem(participant_ids, user.id)
+
+	    ::continue::
 	end
 
 	local res_body = ("Okay %s, you have %s minutes to choose your picks! Ping me here again with a valid pick, check my profile if you're unsure.%s"):format(data.sender.name, tostring(spintimemins), nl)
@@ -290,6 +363,11 @@ function Fumaki:tryextractresponse(data)
 		end
 	end
 
+	if message:match(passpattern) then
+		self:sendmessage("Passing is not an option, it's not in the spirit of the game. Being faced with new faces is part of the game too.", data.sender)
+		return
+	end
+
 	self:sendmessage("No idea what to do with your response, refer to my profile for valid answers!")
 end
 
@@ -327,19 +405,6 @@ do --- sse
 
 		self.log:infoF("received pinging message '%s'", message)
 
-		if data.tab_id == self:getfmktab() then
-			for _, pat in ipairs(rollpatterns) do
-				if message:match(pat) then
-					self:dofmk(data)
-					return
-				end
-			end
-			if self.spinner then
-				self:tryextractresponse(data)
-				return
-			end
-		end
-
 		if message:match(excludepattern) then
 			if table.getIndex(self.save.exceptions, data.sender.id) ~= 0 then
 				self:sendmessage("You're already excluded from rolls.", data.sender, data.tab_id)
@@ -352,6 +417,100 @@ do --- sse
 			local succ = table.removeall(self.save.exceptions, data.sender.id)
 			self:sendmessage(succ and "Alright, you're back in!" or "You're not even excluded...", data.sender, data.tab_id)
 			return
+		end
+
+		do
+			local function _getaltlist(id)
+				if not self.save.alts[id] then
+					self.save.alts[id] = {}
+				end
+				return self.save.alts[id]
+			end
+			local reg_res = message:match(registerpattern)
+			local unreg_res = message:match(unregisterpattern)
+			if reg_res or unreg_res then
+				local is_reg = unreg_res == nil
+				local capt = reg_res or unreg_res
+				local id = tonumber(capt)
+				local name = capt
+
+				local datares;
+				local errs = {}
+				for _, val in pairs({id, name}) do
+					local ok, res = pcall(function ()
+						return self:request(carrion.Api.characters.byident(val)):getbodytable()
+					end)
+					if ok and res then
+						datares = res
+						break
+					else
+						table.insert(errs, {val, res})
+					end
+				end
+
+				if not datares then
+					self:sendmessage("I can't find a user with that Name/ID.", data.sender, data.tab_id)
+					for _, value in pairs(errs) do
+						self.log:debug(("Error in getting user with ident '%s': '%s'"):format(tostring(value[1]), tostring(value[2])))
+					end
+					return
+				end
+
+				local alt_list = _getaltlist(data.sender.id)
+				local rev_list = _getaltlist(datares.id)
+				local res = "failed" ---@type AltRegResult
+				local error = "Nothing…?"
+
+				if is_reg then
+					if alt_list[datares.id] == nil then
+						alt_list[datares.id] = false
+						rev_list[data.sender.id] = false
+						res = "registered"
+					elseif alt_list[datares.id] then
+						error = "Character is already a confirmed alt."
+						res = "failed"
+					elseif rev_list[data.sender.id] ~= nil then
+						alt_list[datares.id] = true
+						rev_list[data.sender.id] = true
+						res = "confirmed"
+					end
+				else
+					local succ = table.contains(alt_list, datares.id) or table.contains(rev_list, data.sender.id)
+					if not succ then
+						error = "Character is not registered as an alt."
+					end
+					alt_list[datares.id] = nil
+					rev_list[data.sender.id] = nil
+					res = succ and "removed" or "failed"
+				end
+
+				if res == "registered" then
+					self:sendmessage(("Alright, %s is penciled in as your alt. Run the command with your Name/ID on them to confirm."):format(datares.name), data.sender, data.tab_id)
+					return
+				elseif res =="confirmed" then
+					self:sendmessage(("Alright, %s is confirmed in as your alt, and won't appear in your rolls (and vice versa)."):format(datares.name), data.sender, data.tab_id)
+					return
+				elseif res == "removed" then
+					self:sendmessage(("Alright, %s is removed as your alt."):format(datares.name), data.sender, data.tab_id)
+					return
+				elseif res =="failed" then
+					self:sendmessage(("Something didn't work here: %s"):format(error), data.sender, data.tab_id)
+					return
+				end
+			end
+		end
+
+		if data.tab_id == self:getfmktab() then
+			for _, pat in ipairs(rollpatterns) do
+				if message:match(pat) then
+					self:dofmk(data)
+					return
+				end
+			end
+			if self.spinner then
+				self:tryextractresponse(data)
+				return
+			end
 		end
 
 		if message:match(statpattern) then
@@ -382,15 +541,6 @@ return function (token, arg)
 
 	fumaki:loaddata()
 	fumaki:login()
-
-	local res = fumaki:request(
-		carrion.Api.presence.subscribe,
-		carrion:makehttpcontent {
-			rooms = {
-				roomname,
-			}
-		}
-	)
 
 	fumaki:heartbeat()
 end
